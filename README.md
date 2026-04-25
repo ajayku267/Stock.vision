@@ -96,6 +96,32 @@ python -m streamlit run main.py --server.port 8501
 - Frontend: `http://localhost:8501`
 - Backend docs: `http://127.0.0.1:8000/docs`
 
+## Recommended Hosting (Chosen)
+
+For your goal ("open a link and present without editor"), the best fit is:
+
+- **Render full-stack deployment** using `render.yaml`
+- Hosts both:
+  - `stockvision-backend` (FastAPI)
+  - `stockvision-frontend` (Streamlit)
+- Frontend auto-connects to backend via environment variables
+
+### Deploy on Render
+
+1. Push this repo to GitHub.
+2. In Render: **New +** -> **Blueprint**.
+3. Select your repo (Render will detect `render.yaml`).
+4. Click **Apply**.
+5. Wait for both services to become live.
+6. Open the frontend Render URL and demo directly.
+
+### Hosting Notes
+
+- `runtime.txt` pins Python runtime for consistent builds.
+- CORS is enabled in backend so frontend/backend can communicate across domains.
+- Backend API docs will be available at:
+  - `https://<your-backend-service>/docs`
+
 ## API Example
 
 ```bash

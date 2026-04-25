@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import streamlit as st
 from streamlit_option_menu import option_menu
@@ -57,8 +58,12 @@ with st.sidebar.expander("Forecast Settings", expanded=True):
     backtest_days = st.slider("Backtest days", 15, 90, 30, help="How many recent days to reserve for backtesting")
     signal_threshold_pct = st.slider("Signal threshold (%)", 0.5, 5.0, 2.0, 0.5)
 with st.sidebar.expander("Backend API", expanded=False):
-    use_backend_api = st.toggle("Use backend API mode", value=False)
-    backend_url = st.text_input("Backend URL", value="http://127.0.0.1:8000")
+    default_use_backend = os.getenv("STOCKVISION_USE_BACKEND_DEFAULT", "false").strip().lower() == "true"
+    default_backend_url = os.getenv("STOCKVISION_BACKEND_URL", "http://127.0.0.1:8000").strip()
+    if default_backend_url and not default_backend_url.startswith(("http://", "https://")):
+        default_backend_url = f"https://{default_backend_url}"
+    use_backend_api = st.toggle("Use backend API mode", value=default_use_backend)
+    backend_url = st.text_input("Backend URL", value=default_backend_url)
 
 period = years_to_predict * 365
 
