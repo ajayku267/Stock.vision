@@ -59,6 +59,8 @@ Stock.vision/
   - backtest results
   - technical indicators
   - bullish/neutral/bearish signal
+- Optional API key security via `STOCKVISION_API_KEY` (`X-API-Key` header)
+- Request logging middleware with request IDs for observability
 
 ### Forecasting + Quant Logic
 
@@ -127,6 +129,26 @@ For your goal ("open a link and present without editor"), the best fit is:
 ```bash
 curl "http://127.0.0.1:8000/predict?ticker=AAPL&start_date=2024-01-01&end_date=2024-06-01&years_to_predict=1&backtest_days=30&signal_threshold_pct=2.0"
 ```
+
+If API key is enabled:
+
+```bash
+curl -H "X-API-Key: your-secret-key" "http://127.0.0.1:8000/predict?ticker=AAPL&start_date=2024-01-01&end_date=2024-06-01&years_to_predict=1&backtest_days=30&signal_threshold_pct=2.0"
+```
+
+## Production-Style Environment Variables
+
+- `STOCKVISION_USE_BACKEND_DEFAULT=true`
+- `STOCKVISION_BACKEND_URL=https://<backend-domain>`
+- `STOCKVISION_API_KEY=<strong-secret>` (optional backend protection)
+
+## Testing & CI
+
+- Backend tests live in `tests/test_backend.py`
+- CI workflow in `.github/workflows/ci.yml` runs:
+  - dependency install
+  - syntax validation
+  - automated tests (`pytest`)
 
 ## Suggested Interview Demo Flow
 
