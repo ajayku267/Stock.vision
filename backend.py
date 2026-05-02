@@ -310,6 +310,22 @@ def predict(
     latest = bundle["tech_data"].iloc[-1]
     indicator_cols = ["Date", "Close", "SMA_20", "EMA_20", "RSI_14", "Volatility_30"]
 
+    # Convert dataframes to JSON-serializable format
+    historical_data = bundle["new_data"].copy()
+    forecast_data = bundle["new_forecast"].copy()
+    tech_data = bundle["tech_data"].copy()
+    
+    # Convert date columns to strings for JSON serialization
+    if 'Date' in historical_data.columns:
+        historical_data['Date'] = historical_data['Date'].dt.strftime('%Y-%m-%d')
+    if 'Date' in forecast_data.columns:
+        forecast_data['Date'] = forecast_data['Date'].dt.strftime('%Y-%m-%d')
+    if 'Date' in tech_data.columns:
+        tech_data['Date'] = tech_data['Date'].dt.strftime('%Y-%m-%d')
+    
+    # Convert datetime columns in stats
+    stats_dict = bundle["stats_data"].describe().to_dict()
+    
     response_payload = {
         "request_id": request.headers.get("x-request-id", ""),
         "ticker": ticker.upper(),
@@ -319,16 +335,16 @@ def predict(
         "signal_info": bundle["signal_info"],
         "next_day_prediction": bundle["next_day_prediction"],
         "training_rows": int(len(bundle["df_train"])),
-        "historical": bundle["new_data"].to_dict(orient="records"),
-        "forecast": bundle["new_forecast"].to_dict(orient="records"),
-        "stats": bundle["stats_data"].describe().to_dict(),
+        "historical": historical_data.to_dict(orient="records"),
+        "forecast": forecast_data.to_dict(orient="records"),
+        "stats": stats_dict,
         "indicators_latest": {
             "SMA_20": None if latest["SMA_20"] != latest["SMA_20"] else float(latest["SMA_20"]),
             "EMA_20": None if latest["EMA_20"] != latest["EMA_20"] else float(latest["EMA_20"]),
             "RSI_14": None if latest["RSI_14"] != latest["RSI_14"] else float(latest["RSI_14"]),
             "Volatility_30": None if latest["Volatility_30"] != latest["Volatility_30"] else float(latest["Volatility_30"]),
         },
-        "indicators_table": bundle["tech_data"][indicator_cols].tail(60).to_dict(orient="records"),
+        "indicators_table": tech_data[indicator_cols].tail(60).to_dict(orient="records"),
     }
     
     # Store in database

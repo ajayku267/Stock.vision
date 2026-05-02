@@ -1,24 +1,39 @@
 import os
 import pandas as pd
+import numpy as np
 import streamlit as st
 from streamlit_option_menu import option_menu
 from datetime import date, datetime, timedelta
 import time
-import os
-from streamlit_option_menu import option_menu
+import warnings
+warnings.filterwarnings('ignore')
 
-from services import (
-    load_data, plot_data, plot_multiple_data, plot_volume,
-    generate_prediction_bundle, fetch_backend_prediction,
-    get_real_time_stock_data, get_multiple_real_time_data, get_market_overview,
-    get_financial_news, get_trending_stocks, get_market_sentiment,
-    plot_real_time_chart, display_stock_metrics
-)
-from ui_components import (
-    render_sidebar_config, render_header, render_kpi_cards,
-    render_dataframes_tab, render_plots_tab, render_statistics_tab,
-    render_forecasting_tab, render_comparison_tab, render_interview_view
-)
+# Conditional imports for cloud deployment
+try:
+    from services import (
+        load_data, plot_data, plot_multiple_data, plot_volume,
+        generate_prediction_bundle, fetch_backend_prediction,
+        get_real_time_stock_data, get_multiple_real_time_data, get_market_overview,
+        get_financial_news, get_trending_stocks, get_market_sentiment,
+        plot_real_time_chart, display_stock_metrics
+    )
+    from ui_components import (
+        render_sidebar_config, render_header, render_kpi_cards,
+        render_dataframes_tab, render_plots_tab, render_statistics_tab,
+        render_forecasting_tab, render_comparison_tab, render_interview_view
+    )
+    ML_FEATURES_AVAILABLE = True
+except ImportError as e:
+    st.error(f"Some advanced features are unavailable in cloud deployment: {str(e)}")
+    ML_FEATURES_AVAILABLE = False
+
+# Basic services that should always work
+try:
+    from services import load_data, plot_data, plot_volume
+    from ui_components import render_sidebar_config, render_header, render_kpi_cards, render_dataframes_tab, render_plots_tab, render_statistics_tab
+except ImportError:
+    st.error("Core services not available")
+    st.stop()
 
 
 # Render UI components
@@ -37,75 +52,130 @@ use_backend_api = config["use_backend_api"]
 backend_url = config["backend_url"]
 period = config["period"]
 
+# Define available tabs based on feature availability
+if ML_FEATURES_AVAILABLE:
+    tab_options = ["Real-Time Data", "Market Overview", "Financial News", "Trending Stocks", "Dataframes", "Plots", "Statistics", "Forecasting", "Comparison", "Interview View"]
+    tab_icons = ["activity", "graph-up", "newspaper", "trending-up", "table", "bar-chart", "calculator", "graph-up-arrow", "arrow-down-up", "briefcase"]
+    default_tab = 0  # Start with Real-Time Data
+else:
+    tab_options = ["Dataframes", "Plots", "Statistics"]
+    tab_icons = ["table", "bar-chart", "calculator"]
+    default_tab = 0  # Start with Dataframes
+
 selected_tab = option_menu(
     menu_title=None,
-    options=["Real-Time Data", "Market Overview", "Financial News", "Trending Stocks", "Dataframes", "Plots", "Statistics", "Forecasting", "Comparison", "Interview View"],
-    icons=["activity", "graph-up", "newspaper", "trending-up", "table", "bar-chart", "calculator", "graph-up-arrow", "arrow-down-up", "briefcase"],
+    options=tab_options,
+    icons=tab_icons,
     menu_icon="📊",
-    default_index=0,
+    default_index=default_tab,
     orientation="horizontal",
 )
-with st.spinner("Loading data..."):
+# Load basic data for all modes
+data = None
+new_data = None
+new_forecast = None
+stats_summary_df = None
+tech_data = None
+df_train = None
+forecast = None
+model = None
+mae = rmse = mape = 0.0
+backtest = {}
+signal_info = {"signal": "UNKNOWN", "expected_return_percent": 0.0}
+next_day_prediction = 0.0
+
+# Load basic stock data
+with st.spinner("Loading stock data..."):
     try:
-        if use_backend_api:
-            api_payload = fetch_backend_prediction(
-                base_url=backend_url,
-                ticker=selected_stock,
-                start_date=start_date,
-                end_date=end_date,
-                years_to_predict=years_to_predict,
-                backtest_days=backtest_days,
-                signal_threshold_pct=signal_threshold_pct,
-            )
-            new_data = pd.DataFrame(api_payload["historical"])
-            new_forecast = pd.DataFrame(api_payload["forecast"])
-            stats_summary_df = pd.DataFrame(api_payload["stats"])
-            tech_data = pd.DataFrame(api_payload["indicators_table"])
-            data = new_data.copy()
-            df_train = pd.DataFrame({"ds": pd.to_datetime(new_data["Date"]), "y": pd.to_numeric(new_data["Close"])})
-            forecast = pd.DataFrame(
-                {
-                    "ds": pd.to_datetime(new_forecast["Date"]),
-                    "yhat": pd.to_numeric(new_forecast["Close"]),
-                    "yhat_lower": pd.to_numeric(new_forecast["Close Lower"]),
-                    "yhat_upper": pd.to_numeric(new_forecast["Close Upper"]),
-                }
-            )
-            model = None
-            metrics = api_payload["metrics"]
-            mae = metrics["mae"]
-            rmse = metrics["rmse"]
-            mape = metrics["mape"]
-            backtest = api_payload["backtest"]
-            signal_info = api_payload["signal_info"]
-            next_day_prediction = api_payload["next_day_prediction"]
+        data = load_data(selected_stock, start_date, end_date)
+        if data is not None and not data.empty:
+            new_data = data.copy()
+            # Create basic stats
+            numeric_cols = data.select_dtypes(include=[np.number]).columns
+            stats_summary_df = data[numeric_cols].describe()
+            
+            # Add basic technical indicators
+            data["SMA_20"] = data["Close"].rolling(window=20).mean()
+            data["EMA_20"] = data["Close"].ewm(span=20, adjust=False).mean()
+            delta = data["Close"].diff()
+            gain = delta.clip(lower=0).rolling(window=14).mean()
+            loss = (-delta.clip(upper=0)).rolling(window=14).mean()
+            rs = gain / loss.replace(0, np.nan)
+            data["RSI_14"] = 100 - (100 / (1 + rs))
+            data["Volatility_30"] = data["Close"].pct_change().rolling(window=30).std() * np.sqrt(252)
+            tech_data = data.copy()
         else:
-            bundle = generate_prediction_bundle(
-                ticker=selected_stock,
-                start_date=start_date,
-                end_date=end_date,
-                years_to_predict=years_to_predict,
-                backtest_days=backtest_days,
-                signal_threshold_pct=signal_threshold_pct,
-            )
-            data = bundle["data"]
-            df_train = bundle["df_train"]
-            forecast = bundle["forecast"]
-            new_data = bundle["new_data"]
-            new_forecast = bundle["new_forecast"]
-            stats_data = bundle["stats_data"]
-            tech_data = bundle["tech_data"]
-            model = bundle["model"]
-            mae = bundle["metrics"]["mae"]
-            rmse = bundle["metrics"]["rmse"]
-            mape = bundle["metrics"]["mape"]
-            backtest = bundle["backtest"]
-            signal_info = bundle["signal_info"]
-            next_day_prediction = bundle["next_day_prediction"]
-            stats_summary_df = stats_data.describe()
+            st.error("Failed to load stock data")
+            st.stop()
     except Exception as exc:
-        st.error(f"Prediction pipeline failed: {str(exc)}")
+        st.error(f"Data loading failed: {str(exc)}")
         st.stop()
+
+# Load ML features if available
+if ML_FEATURES_AVAILABLE and (selected_tab in ["Forecasting", "Comparison", "Interview View"] or use_backend_api):
+    with st.spinner("Loading ML features..."):
+        try:
+            if use_backend_api:
+                api_payload = fetch_backend_prediction(
+                    ticker=selected_stock,
+                    config={
+                        "backend_url": backend_url,
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "years_to_predict": years_to_predict,
+                        "backtest_days": backtest_days,
+                        "signal_threshold_pct": signal_threshold_pct
+                    }
+                )
+                new_data = pd.DataFrame(api_payload["historical"])
+                new_forecast = pd.DataFrame(api_payload["forecast"])
+                stats_summary_df = pd.DataFrame(api_payload["stats"])
+                tech_data = pd.DataFrame(api_payload["indicators_table"])
+                data = new_data.copy()
+                df_train = pd.DataFrame({"ds": pd.to_datetime(new_data["Date"]), "y": pd.to_numeric(new_data["Close"])})
+                forecast = pd.DataFrame(
+                    {
+                        "ds": pd.to_datetime(new_forecast["Date"]),
+                        "yhat": pd.to_numeric(new_forecast["Close"]),
+                        "yhat_lower": pd.to_numeric(new_forecast["Close Lower"]),
+                        "yhat_upper": pd.to_numeric(new_forecast["Close Upper"]),
+                    }
+                )
+                model = None
+                metrics = api_payload["metrics"]
+                mae = metrics["mae"]
+                rmse = metrics["rmse"]
+                mape = metrics["mape"]
+                backtest = api_payload["backtest"]
+                signal_info = api_payload["signal_info"]
+                next_day_prediction = api_payload["next_day_prediction"]
+            else:
+                bundle = generate_prediction_bundle(
+                    ticker=selected_stock,
+                    start_date=start_date,
+                    end_date=end_date,
+                    years_to_predict=years_to_predict,
+                    backtest_days=backtest_days,
+                    signal_threshold_pct=signal_threshold_pct,
+                )
+                data = bundle["data"]
+                df_train = bundle["df_train"]
+                forecast = bundle["forecast"]
+                new_data = bundle["new_data"]
+                new_forecast = bundle["new_forecast"]
+                stats_data = bundle["stats_data"]
+                tech_data = bundle["tech_data"]
+                model = bundle["model"]
+                mae = bundle["metrics"]["mae"]
+                rmse = bundle["metrics"]["rmse"]
+                mape = bundle["metrics"]["mape"]
+                backtest = bundle["backtest"]
+                signal_info = bundle["signal_info"]
+                next_day_prediction = bundle["next_day_prediction"]
+                stats_summary_df = stats_data.describe()
+        except Exception as exc:
+            st.warning(f"ML features unavailable: {str(exc)}")
+            ML_FEATURES_AVAILABLE = False
 
 # Extract metrics for KPI display
 metrics = {
