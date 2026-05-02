@@ -6,16 +6,21 @@ import numpy as np
 from prophet import Prophet
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 import requests
+from typing import Dict, List, Any, Optional, Tuple, Union
+from datetime import datetime, date
+import cache
+from data_extractors import data_extractor, real_time_stream
+from news_aggregator import news_aggregator
 
 @st.cache_data
-def load_data(ticker, start, end):
+def load_data(ticker: str, start: Union[str, date], end: Union[str, date]) -> Optional[pd.DataFrame]:
     """
     Load historical stock price data from Yahoo Finance.
 
     Parameters:
     - ticker (str): Stock symbol (e.g., AAPL).
-    - start (str): Start date in the format 'YYYY-MM-DD'.
-    - end (str): End date in the format 'YYYY-MM-DD'.
+    - start (str or date): Start date in the format 'YYYY-MM-DD' or a date object.
+    - end (str or date): End date in the format 'YYYY-MM-DD' or a date object.
 
     Returns:
     - data (pd.DataFrame): DataFrame containing historical stock price data.
@@ -32,7 +37,7 @@ def load_data(ticker, start, end):
         st.error(f"Error loading data for {ticker}: {str(e)}")
         return None
 
-def plot_data(data):
+def plot_data(data: pd.DataFrame) -> None:
     """
     Plot historical stock price data.
 
@@ -45,7 +50,7 @@ def plot_data(data):
     fig.update_layout(title_text="Stock Prices Over Time", xaxis_rangeslider_visible=True)
     st.plotly_chart(fig, width="stretch")
 
-def plot_multiple_data(data, stock_names):
+def plot_multiple_data(data: List[pd.DataFrame], stock_names: List[str]) -> None:
     """
     Plot forecasted stock prices for multiple stocks.
 
@@ -59,7 +64,7 @@ def plot_multiple_data(data, stock_names):
     fig.update_layout(title_text="Stock Prices Over Time", xaxis_rangeslider_visible=True)
     st.plotly_chart(fig, width="stretch")
 
-def plot_volume(data):
+def plot_volume(data: pd.DataFrame) -> None:
     """
     Plot historical stock volume data.
 
@@ -127,7 +132,7 @@ def add_technical_indicators(data: pd.DataFrame) -> pd.DataFrame:
     return enriched
 
 
-def run_prophet_backtest(df_train: pd.DataFrame, test_days: int = 30) -> dict:
+def run_prophet_backtest(df_train: pd.DataFrame, test_days: int = 30) -> Dict[str, Any]:
     if len(df_train) <= test_days + 20:
         return {"status": "insufficient_data"}
 
@@ -162,7 +167,7 @@ def run_prophet_backtest(df_train: pd.DataFrame, test_days: int = 30) -> dict:
     }
 
 
-def derive_forecast_signal(last_close: float, next_close: float, threshold: float = 0.02) -> dict:
+def derive_forecast_signal(last_close: float, next_close: float, threshold: float = 0.02) -> Dict[str, Any]:
     if last_close <= 0:
         return {"signal": "UNKNOWN", "expected_return_percent": 0.0}
 
@@ -181,12 +186,12 @@ def derive_forecast_signal(last_close: float, next_close: float, threshold: floa
 
 def generate_prediction_bundle(
     ticker: str,
-    start_date,
-    end_date,
+    start_date: Union[str, date],
+    end_date: Union[str, date],
     years_to_predict: int,
     backtest_days: int,
     signal_threshold_pct: float,
-):
+) -> Dict[str, Any]:
     data = load_data(ticker, start_date, end_date)
     if data is None or data.empty:
         raise ValueError("No data returned for the selected stock/date range.")
@@ -251,26 +256,215 @@ def generate_prediction_bundle(
     }
 
 
-def fetch_backend_prediction(
-    base_url: str,
-    ticker: str,
-    start_date,
-    end_date,
-    years_to_predict: int,
-    backtest_days: int,
-    signal_threshold_pct: float,
-):
-    response = requests.get(
-        f"{base_url.rstrip('/')}/predict",
-        params={
-            "ticker": ticker,
-            "start_date": str(start_date),
-            "end_date": str(end_date),
-            "years_to_predict": years_to_predict,
-            "backtest_days": backtest_days,
-            "signal_threshold_pct": signal_threshold_pct,
-        },
-        timeout=60,
+def fetch_backend_prediction(ticker: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """Fetch prediction from backend API."""
+    backend_url = config.get("backend_url", "http://localhost:8001")
+    
+    try:
+        response = requests.post(
+            f"{backend_url}/predict",
+            json={
+                "ticker": ticker,
+                "start_date": config["start_date"],
+                "end_date": config["end_date"],
+                "years_to_predict": config["years_to_predict"],
+                "backtest_days": config["backtest_days"],
+                "signal_threshold_pct": config["signal_threshold_pct"]
+            },
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.error(f"Error fetching backend prediction: {str(e)}")
+        return {"error": str(e)}
+
+# Real-time data extraction functions
+def get_real_time_stock_data(ticker: str) -> Optional[Dict[str, Any]]:
+    """Get real-time stock data from multiple sources."""
+    try:
+        stock_data = data_extractor.get_stock_data(ticker)
+        if stock_data:
+            return {
+                "ticker": stock_data.ticker,
+                "company_name": stock_data.company_name,
+                "current_price": stock_data.current_price,
+                "change": stock_data.change,
+                "change_percent": stock_data.change_percent,
+                "volume": stock_data.volume,
+                "market_cap": stock_data.market_cap,
+                "pe_ratio": stock_data.pe_ratio,
+                "dividend_yield": stock_data.dividend_yield,
+                "high_52w": stock_data.high_52w,
+                "low_52w": stock_data.low_52w,
+                "avg_volume": stock_data.avg_volume,
+                "beta": stock_data.beta,
+                "eps": stock_data.eps,
+                "revenue": stock_data.revenue,
+                "timestamp": stock_data.timestamp.isoformat()
+            }
+        return None
+    except Exception as e:
+        st.error(f"Error fetching real-time data for {ticker}: {str(e)}")
+        return None
+
+def get_multiple_real_time_data(tickers: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Get real-time data for multiple stocks."""
+    results = {}
+    for ticker in tickers:
+        results[ticker] = get_real_time_stock_data(ticker)
+    return results
+
+def get_market_overview() -> Dict[str, Any]:
+    """Get market overview with indices data."""
+    try:
+        overview = data_extractor.get_market_overview()
+        return overview
+    except Exception as e:
+        st.error(f"Error fetching market overview: {str(e)}")
+        return {}
+
+def get_financial_news(ticker: str = None, limit: int = 10) -> List[Dict[str, Any]]:
+    """Get latest financial news."""
+    try:
+        if ticker:
+            news = news_aggregator.get_news_by_ticker(ticker, hours_back=24)
+        else:
+            news = news_aggregator.get_all_news(limit_per_source=limit//4)
+        
+        # Convert to dict format
+        news_list = []
+        for article in news[:limit]:
+            news_list.append({
+                "title": article.title,
+                "url": article.url,
+                "source": article.source,
+                "published_date": article.published_date.isoformat(),
+                "summary": article.summary,
+                "tickers": article.tickers,
+                "author": article.author
+            })
+        
+        return news_list
+    except Exception as e:
+        st.error(f"Error fetching financial news: {str(e)}")
+        return []
+
+def get_trending_stocks() -> Dict[str, int]:
+    """Get trending stocks based on news mentions."""
+    try:
+        trending = news_aggregator.get_trending_stocks(hours_back=24)
+        return trending
+    except Exception as e:
+        st.error(f"Error fetching trending stocks: {str(e)}")
+        return {}
+
+def get_market_sentiment() -> Dict[str, Any]:
+    """Get overall market sentiment from news."""
+    try:
+        sentiment = news_aggregator.get_market_sentiment(hours_back=24)
+        return sentiment
+    except Exception as e:
+        st.error(f"Error fetching market sentiment: {str(e)}")
+        return {}
+
+def plot_real_time_chart(ticker: str, data: Dict[str, Any]) -> None:
+    """Plot real-time stock data with current price and indicators."""
+    if not data:
+        st.error("No data available for plotting")
+        return
+    
+    # Create a simple price chart with current price
+    fig = go.Figure()
+    
+    # Add current price point
+    fig.add_trace(go.Scatter(
+        x=[data["timestamp"]],
+        y=[data["current_price"]],
+        mode='markers+text',
+        marker=dict(size=15, color='green' if data["change"] > 0 else 'red'),
+        text=[f'${data["current_price"]:.2f}'],
+        textposition="top center",
+        name=f'{ticker} Current Price'
+    ))
+    
+    # Add 52-week range if available
+    if data.get("high_52w") and data.get("low_52w"):
+        fig.add_hline(y=data["high_52w"], line_dash="dash", line_color="red", 
+                     annotation_text=f"52W High: ${data['high_52w']:.2f}")
+        fig.add_hline(y=data["low_52w"], line_dash="dash", line_color="green",
+                     annotation_text=f"52W Low: ${data['low_52w']:.2f}")
+    
+    fig.update_layout(
+        title=f"{data['company_name']} ({ticker}) - Real-Time Data",
+        xaxis_title="Time",
+        yaxis_title="Price ($)",
+        showlegend=True,
+        height=400
     )
-    response.raise_for_status()
-    return response.json()
+    
+    st.plotly_chart(fig, width="stretch")
+
+def display_stock_metrics(data: Dict[str, Any]) -> None:
+    """Display key stock metrics in a formatted way."""
+    if not data:
+        return
+    
+    # Create columns for metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "Current Price",
+            f"${data['current_price']:.2f}",
+            f"{data['change']:+.2f} ({data['change_percent']:+.2f}%)",
+            delta_color="normal" if data["change"] >= 0 else "inverse"
+        )
+    
+    with col2:
+        if data.get("market_cap"):
+            market_cap = data["market_cap"]
+            if market_cap > 1_000_000_000:
+                st.metric("Market Cap", f"${market_cap/1_000_000_000:.1f}B")
+            elif market_cap > 1_000_000:
+                st.metric("Market Cap", f"${market_cap/1_000_000:.1f}M")
+            else:
+                st.metric("Market Cap", f"${market_cap:,.0f}")
+    
+    with col3:
+        if data.get("pe_ratio"):
+            st.metric("P/E Ratio", f"{data['pe_ratio']:.2f}")
+    
+    with col4:
+        if data.get("volume"):
+            volume = data["volume"]
+            if volume > 1_000_000:
+                st.metric("Volume", f"{volume/1_000_000:.1f}M")
+            elif volume > 1_000:
+                st.metric("Volume", f"{volume/1_000:.1f}K")
+            else:
+                st.metric("Volume", f"{volume:,}")
+    
+    # Additional metrics in expandable section
+    with st.expander("Detailed Metrics"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if data.get("dividend_yield"):
+                st.metric("Dividend Yield", f"{data['dividend_yield']*100:.2f}%")
+            if data.get("beta"):
+                st.metric("Beta", f"{data['beta']:.2f}")
+            if data.get("eps"):
+                st.metric("EPS", f"${data['eps']:.2f}")
+        
+        with col2:
+            if data.get("high_52w"):
+                st.metric("52W High", f"${data['high_52w']:.2f}")
+            if data.get("low_52w"):
+                st.metric("52W Low", f"${data['low_52w']:.2f}")
+            if data.get("avg_volume"):
+                avg_vol = data["avg_volume"]
+                if avg_vol > 1_000_000:
+                    st.metric("Avg Volume", f"{avg_vol/1_000_000:.1f}M")
+                else:
+                    st.metric("Avg Volume", f"{avg_vol:,}")

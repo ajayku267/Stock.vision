@@ -38,6 +38,16 @@ def _mock_bundle():
     }
 
 
+def test_root_endpoint():
+    client = TestClient(backend.app)
+    response = client.get("/")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["service"] == "stockvision-backend"
+    assert "endpoints" in payload
+    assert "docs" in payload
+
+
 def test_health_endpoint():
     client = TestClient(backend.app)
     response = client.get("/health")

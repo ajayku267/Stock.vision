@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: stockvision
+  labels:
+    app: stockvision
+    component: frontend
+    version: v1.0.0
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: stockvision
+      component: frontend
+  template:
+    metadata:
+      labels:
+        app: stockvision
+        component: frontend
+        version: v1.0.0
+    spec:
+      containers:
+      - name: frontend
+        image: stockvision/frontend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8501
+          name: http
+          protocol: TCP
+        env:
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: stockvision-config
+              key: ENVIRONMENT
+        - name: STOCKVISION_USE_BACKEND_DEFAULT
+          valueFrom:
+            configMapKeyRef:
+              name: stockvision-config
+              key: STOCKVISION_USE_BACKEND_DEFAULT
+        - name: STOCKVISION_BACKEND_URL
+          valueFrom:
+            configMapKeyRef:
+              name: stockvision-config
+              key: STOCKVISION_BACKEND_URL
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+        livenessProbe:
+          httpGet:
+            path: /_stcore/health
+            port: 8501
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /_stcore/health
+            port: 8501
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: stockvision
+  labels:
+    app: stockvision
+    component: frontend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8501
+    targetPort: 8501
+    protocol: TCP
+    name: http
+  selector:
+    app: stockvision
+    component: frontend

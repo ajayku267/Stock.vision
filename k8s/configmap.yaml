@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stockvision-config
+  namespace: stockvision
+  labels:
+    app: stockvision
+    component: config
+data:
+  ENVIRONMENT: "production"
+  DATABASE_URL: "postgresql://stockvision:password@postgres:5432/stockvision"
+  REDIS_URL: "redis://redis:6379/0"
+  STOCKVISION_API_KEY: "your-api-key-here"
+  STOCKVISION_USE_BACKEND_DEFAULT: "true"
+  STOCKVISION_BACKEND_URL: "http://backend:8000"
+  SECRET_KEY: "your-secret-key-here-change-in-production"
+  SMTP_SERVER: "smtp.gmail.com"
+  SMTP_PORT: "587"
+  
+  # Celery configuration
+  CELERY_BROKER_URL: "redis://redis:6379/0"
+  CELERY_RESULT_BACKEND: "redis://redis:6379/0"
+  
+  # Logging configuration
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  
+  # Performance settings
+  WORKER_CONNECTIONS: "1000"
+  WORKER_TIMEOUT: "30"
+  
+  # Cache settings
+  CACHE_TTL: "300"
+  CACHE_MAX_SIZE: "1000"
+  
+  # Rate limiting
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_WINDOW: "60"
+  
+  # WebSocket settings
+  WEBSOCKET_HEARTBEAT_INTERVAL: "30"
+  WEBSOCKET_MAX_CONNECTIONS: "1000"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stockvision-nginx-config
+  namespace: stockvision
+  labels:
+    app: stockvision
+    component: nginx
+data:
+  nginx.conf: |
+    upstream backend {
+        server backend:8000;
+    }
+    
+    upstream frontend {
+        server frontend:8501;
+    }
+    
+    server {
+        listen 80;
+        server_name _;
+        
+        # Enable gzip compression
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
+        
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer-when-downgrade" always;
+        add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
+        
+        # API routes
+        location /api/ {
+            proxy_pass http://backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # WebSocket support
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            
+            # Timeouts
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+        
+        # WebSocket routes
+        location /ws/ {
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        
+        # Static files
+        location /static/ {
+            proxy_pass http://frontend;
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+        
+        # Frontend routes
+        location / {
+            proxy_pass http://frontend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        
+        # Health checks
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+    }
